@@ -1,0 +1,198 @@
+---
+title: "StoreForecastReg"
+author: "Noah N"
+date: "2024-03-31"
+output: html_document
+---
+
+Goal: Use store data to forecast sales 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, messages = FALSE, comment = FALSE)
+```
+
+Chunk1:I will be using  2 differnt models 1.a regression technique for predicting sales and 2.forecasting technique forsales. Now I need to do some data preprocessing first 
+- load all necessary libraries
+```{r data preprocessing}
+library(tidyverse)
+library(xgboost)
+library(tseries)
+library(forecast)
+library(skimr)
+#load data 
+store.data = data.frame(read.csv("C:/Users/noahn/OneDrive/Documents/Personalprojects/Data/train.csv"))
+#understand the data using skimr package 
+skim(store.data)
+#no missing variables very nice, now see data structure 
+head(store.data)
+```
+change dates in data to date formate and extract grouping elements 
+```{r datamanipulation}
+#change date column to date not numeric 
+store.data$month = month(as.Date(store.data$date))
+store.data$year = year(as.Date(store.data$date))
+
+head(store.data)
+#check to make sure all months are in 
+unique(store.data$month)
+#same for year
+unique(store.data$year)
+#checks out :) 
+```
+```{r plotsales}
+monthlysales <- store.data%>%
+  mutate(month = format(as.Date(date),"%Y-%m"))%>%
+  group_by(month) %>% 
+  summarise(total_sales = sum(sales))
+# Create a line plot
+p <- ggplot(monthlysales, mapping = aes(x = month, y = total_sales)) +
+     geom_line(aes(group = 1)) + geom_point()+ geom_smooth(method = "lm", se = TRUE, color = alpha(c("steelblue"),.3), aes(group = 1), )+
+     labs(x = "Date grouped by month", y = "Sales for all stores") +
+     theme(axis.text.x = element_text(angle = 60, hjust = 1))
+
+# Display the plot
+p
+#we can see a constant continual positive trend
+```
+By the looks of the graph we will have to use a trend model as there is a trend in the sales by month by year. Some months take a dip and others skyrocket could be due to holidays , disasters, huge sales at store etc. Now I do have the holiday schedule for the days which could effect sales and help improve our predictions so I will go ahead and joing those to the data set 
+```{r EDA}
+store.data<-store.data%>%inner_join(holidays, by = join_by(date))
+#this will properly match all holidays to our store days 
+head(store.data)
+```
+We can determine our decision to remove or keep holidays based on the effect that have on store sales if stores are mostly closed on holidays it wouldn't help to keep them in but if they are open and making lots of sales it may help to keep them in lets subset our data to just holidays to help determine an answer
+```{r holidays}
+#need to see different types of holiday
+unique(store.data$type)
+#subset Holidays, Events, Bridge, Transfer, Additional
+holiday.df<- subset.data.frame(store.data,type=!"Work Day")
+#make sure they subsetted out
+unique(holiday.df$type)
+#perfect now perform the same grouping analysis but this time for day each specific day 
+holiday.sales<-holiday.df%>%
+  mutate(date = format(as.Date(date)))%>%
+  group_by(date)%>%
+  summarise(total_sales = sum(sales))
+#convert date to date type
+holiday.sales$date<-as.Date(holiday.sales$date)
+#graph points and fix x axis to not be so messy 
+P <- ggplot(holiday.sales, mapping = aes(date,total_sales))+geom_point()+
+    geom_smooth(method = "lm",se = TRUE, color = alpha(c("steelblue"),.3))+ 
+    scale_x_date(date_breaks = "5 months", date_labels = "%b-%d")+
+    labs(x = "Dates of Holidays", y = "Sum of Sales for each Holiday")
+
+# Display the plot
+P
+#display a summary of holiday.sales to show maxes and mins of dates use these to compare to only workday dates
+summary.data.frame(holiday.sales)
+```
+Now do the same for workdays so we can compare if holidays are noticeable in store sales
+```{r workdays}
+#subset out holidays 
+workdays.df = store.data[!store.data$type %in% c("Holiday","Additional","Event","Transfer","Bridge"),]
+#checkout work days 
+unique(workdays.df$date)
+# we only have 5 called for workdays - since there are many stores in many regions the holidays vary greatly that is why (my guess)
+#so yes based on this alone it would be best to leave holidays in 
+workdays.df<-workdays.df%>%
+  mutate(workdate = format(as.Date(date)))%>%
+  group_by(workdate)%>%
+  summarise(total_sales = sum(sales))
+workdays.df$workdate = as.Date(workdays.df$workdate)
+P<-ggplot(workdays.df, mapping = aes(workdate, total_sales))+
+    geom_point()+
+    geom_smooth(method = "lm",se = TRUE, color = alpha(c("steelblue"),.3))+
+    scale_x_date(date_breaks = "5 months",date_labels = "%b-%d")+
+    labs(x= "Dates of typical work days", y = "sum of sales per day of all stores")
+#Display the plot 
+P
+#analyze the summary and compare 
+summary.data.frame(workdays.df)
+# since we are keeping holidays lets make a binary flag for holidays 1-holiday, 0-non holiday
+store.data<-store.data %>%
+  mutate(holiday = case_when(
+    type == "Work Day" ~ 0,
+    TRUE ~ 1
+  ))
+
+```
+Now that we have a basic understanding of our data and know what we will do with it and its structure we can begin our prediction model
+```{r pre-model}
+#for this i want to group by everything by date then apply a linear regression towards it to see what happens we will have to drop some columns first that may mess up the grouping
+store.data.group<- store.data
+#drop unneccessary columns
+store.data.group$locale<-NULL
+store.data.group$locale_name<-NULL
+store.data.group$description<-NULL 
+store.data.group$type<-NULL
+store.data.group$transferred<-NULL
+#Now group
+
+#create day column
+store.data.group$day<-day(as.Date(store.data$date))
+#change date to date datatype
+store.data.group$date<-as.Date(store.data.group$date)
+#create holiday flag and join to our main df 
+hol<-data.frame(holiday = store.data$holiday,promotion= store.data$onpromotion, date = as.Date(store.data$date))
+hol<-hol%>%group_by(date,holiday,promotion)%>%summarise(holiday = mean(holiday), promotion = mean(promotion))
+#group by values we need
+store.data.group<-store.data.group%>%group_by(store_nbr,day,month,year,date)%>%summarise(total_sales = sum(sales))
+#now we can see that we have the data grouped how we want and now we can add the holiday flag to it by join by date
+store.data.group<-store.data.group%>%left_join(hol, by = join_by(date))
+head(store.data.group)
+#sort data to be in order 
+store.data.group<-store.data.group%>%arrange(date)
+head(store.data.group)
+#now check how many unique stores we have to predict for each store 
+unique(store.data.group$store_nbr)#54 unique stores 
+```
+
+For this i want to use a regression model and for time series i believe going with random forest regressor wont be a bad idea
+```{r model}
+library(randomForest)
+library(caret)
+#split the data but first lets subset it by store then seperate data
+store.1 = subset.data.frame(store.data.group, store_nbr == 1)
+X<-store.1[c("day","month","year","holiday","store_nbr")]
+y<-store.1$total_sales
+#this will grab all the data for store 1 - split it 80 train, 20 test
+set.seed(42)
+train_in<-createDataPartition(store.1$total_sales, p =.8, list = FALSE)
+X_train<-X[train_in,]
+X_val<-X[-train_in,]
+Y_train<-y[train_in]
+Y_val<-y[train_in]
+#instantiate model
+model<-randomForest(Y_train~.,data = X_train, ntree = 100, importance = TRUE)
+#predict with our model
+y_pred<-predict(model, newdata = X_val)
+
+#check accuracy y_val - y_pred
+mae<-mean(abs(y_pred - Y_val))
+
+rmse<-sqrt(mean((y_pred - Y_val)^2))
+mae<-as.numeric(round(mae, digits = 3))
+rmse<-as.numeric(round(rmse, digits = 3))
+
+print(paste0("Mean absolute error of Store 1: ",mae))
+print(paste0("Root Mean Squared Error: ",rmse))
+#calculate the rmsle 
+rmsle<-function(y_act,Y_pred){
+  log_diff<-log1p(y_act)-log1p(Y_pred)
+  sqrt(mean(log_diff^2))
+}
+
+rmsle_value<- rmsle(Y_val, y_pred)
+rmsle_value<-round(rmsle_value, digits = 3)
+print(paste0("Root Mean Square Logarithmic Error: ", rmsle_value))
+
+
+
+```
+Our calculated RMSLE =0.69 which is quite good with a MAE of ~ $6,000 and MAE ~ $4,500. Overall quite good model 
+the min sales is 0 and max sales were $32,000 for any given day for store 1. Since we are dealing with grocery stores here variability is expected here which makes for a reasonable RMSE and MAE. 
+
+```{r model#2}
+
+```
+
