@@ -59,7 +59,7 @@ def evaluate_model(model, cv, X_test, y_test):
 # Main function to run the script
 def main():
     # Import data
-    data = pd.read_csv("C:\\Users\\noahn\\OneDrive\\Data\\Training Data.csv")
+    data = pd.read_csv("Training Data.csv")
     data['Review'] = data['Review'].apply(preprocess)
     X_train, X_test, y_train, y_test = train_test_split(data['Review'], data['Liked'], test_size=0.25, random_state=42)
 
