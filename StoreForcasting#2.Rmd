@@ -20,7 +20,7 @@ library(tseries)
 library(forecast)
 library(skimr)
 #load data 
-store.data = data.frame(read.csv("C:/Users/noahn/OneDrive/Documents/Personalprojects/Data/train.csv"))
+store.data = data.frame(read.csv("train.csv"))
 #understand the data using skimr package 
 skim(store.data)
 #no missing variables very nice, now see data structure 
