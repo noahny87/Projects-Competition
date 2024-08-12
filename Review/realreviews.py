@@ -5,7 +5,7 @@ import pandas as pd
 
 def main():
     #load testing data 
-    test = pd.read_csv("C:\\Users\\noahn\\OneDrive\\Data\\Test Data.csv")
+    test = pd.read_csv("Test Data.csv")
     #make a data frame 
     test = pd.DataFrame(test)
     #drop rating column 
