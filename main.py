@@ -210,8 +210,8 @@ def by_warehouse(train, test):
 
 def main(): 
   #load data 
-  train = pd.read_csv("C:\\Users\\noahn\\OneDrive\\Documents\\Pythonprojects\\rohlik-orders-forecasting-challenge\\train.csv")
-  test = pd.read_csv("C:\\Users\\noahn\\OneDrive\\Documents\\Pythonprojects\\rohlik-orders-forecasting-challenge\\test.csv")
+  train = pd.read_csv("train.csv")
+  test = pd.read_csv("test.csv")
   #create instances storing the data formatted data
   train_f,test_f = format_data(train,test)
   #initialize data for splitting 
